@@ -1,0 +1,81 @@
+name: Build CEF for Windows x64
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+ 
+env:
+  DEPOT_TOOLS_WIN_TOOLCHAIN: 0
+  GYP_MSVS_VERSION: 2019
+  CEF_VERSION: 6533
+  WORKSPACE_ROOT: ${{ github.workspace }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Configure git
+      run: |
+        git config --global core.autocrlf false
+        git config --global core.filemode false
+        git config --global core.fscache true
+        git config --global core.preloadindex true
+        git config --global depot-tools.allowGlobalGitConfig true
+
+    - name: Clone automate tools
+      run: |
+        git clone https://bitbucket.org/chromiumembedded/cef.git
+        cd cef
+        git checkout ${{ env.CEF_VERSION }}
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install setuptools wheel
+
+    - name: Install VS Build Tools
+      uses: microsoft/setup-msbuild@v1.3
+
+    - name: Setup depot_tools
+      run: |
+        git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+        echo "${{ github.workspace }}\depot_tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Create build directory
+      run: mkdir source_build
+
+    - name: Download and configure source
+      working-directory: ./source_build
+      run: |
+        python ..\cef\tools\automate\automate-git.py --download-dir=${{ github.workspace }}\source_build --branch=${{ env.CEF_VERSION }} --x64-build --no-debug-build
+
+    - name: Build CEF
+      working-directory: ./source_build
+      run: |
+        python ..\cef\tools\automate\automate-git.py --download-dir=${{ github.workspace }}\source_build --branch=${{ env.CEF_VERSION }} --x64-build --no-debug-build --build-target=cefsimple --minimal-distrib
+
+    - name: Package artifacts
+      run: |
+        mkdir artifacts
+        Copy-Item -Path ".\source_build\chromium\src\cef\binary_distrib\*" -Destination ".\artifacts\" -Recurse
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: cef-windows-x64-${{ env.CEF_VERSION }}
+        path: artifacts/
+
+    - name: Cleanup
+      if: always()
+      run: |
+        Remove-Item -Recurse -Force source_build -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force depot_tools -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force cef -ErrorAction SilentlyContinue
